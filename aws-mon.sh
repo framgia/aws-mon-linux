@@ -72,6 +72,7 @@ usage()
     printf "    %-28s %s\n" "--disk-space-used" "Reports allocated disk space in gigabytes."
     printf "    %-28s %s\n" "--disk-space-avail" "Reports available disk space in gigabytes."
     printf "    %-28s %s\n" "--all-items" "Reports all items."
+    printf "    %-28s %s\n" "--unicorn-mem-util" "Reports unicorn memory utilization in percentages."
 }
 
 
@@ -79,7 +80,7 @@ usage()
 # Options
 ########################################
 SHORT_OPTS="h"
-LONG_OPTS="help,version,verify,verbose,debug,from-cron,profile:,load-ave1,load-ave5,load-ave15,interrupt,context-switch,cpu-us,cpu-sy,cpu-id,cpu-wa,cpu-st,memory-units:,mem-used-incl-cache-buff,mem-util,mem-used,mem-avail,swap-util,swap-used,swap-avail,disk-path:,disk-space-units:,disk-space-util,disk-space-used,disk-space-avail,all-items" 
+LONG_OPTS="help,version,verify,verbose,debug,from-cron,profile:,load-ave1,load-ave5,load-ave15,interrupt,context-switch,cpu-us,cpu-sy,cpu-id,cpu-wa,cpu-st,memory-units:,mem-used-incl-cache-buff,mem-util,mem-used,mem-avail,swap-util,swap-used,swap-avail,disk-path:,disk-space-units:,disk-space-util,disk-space-used,disk-space-avail,all-items,unicorn-mem-util"
 
 ARGS=$(getopt -s bash --options $SHORT_OPTS --longoptions $LONG_OPTS --name $SCRIPT_NAME -- "$@" ) 
 
@@ -113,6 +114,7 @@ DISK_SPACE_UNIT_DIV=1
 DISK_SPACE_UTIL=0
 DISK_SPACE_USED=0
 DISK_SPACE_AVAIL=0
+UNICORN_MEM_UTIL=0
 
 eval set -- "$ARGS" 
 while true; do 
@@ -239,6 +241,9 @@ while true; do
             DISK_SPACE_USED=1
             DISK_SPACE_AVAIL=1
             ;;
+        --unicorn-mem-util)
+            UNICORN_MEM_UTIL=1
+            ;;
         --) 
             shift
             break 
@@ -317,7 +322,7 @@ if [ $FROM_CRON -eq 1 ]; then
 fi
 
 # CloudWatch Command Line Interface Option
-CLOUDWATCH_OPTS="--namespace System/Detail/Linux --dimensions InstanceId=$instanceid"
+CLOUDWATCH_OPTS="--namespace System/Linux --dimensions InstanceId=$instanceid"
 if [ -n "$PROFILE" ]; then
     CLOUDWATCH_OPTS="$CLOUDWATCH_OPTS --profile $PROFILE"
 fi
@@ -574,3 +579,18 @@ if [ $DISK_SPACE_AVAIL -eq 1 -a -n "$DISK_PATH" ]; then
     fi
 fi
 
+# unicorn memory
+if [ $UNICORN_MEM_UTIL -eq 1 -a $mem_total -gt 0 ]; then
+    # all processes
+    unicorn_mem_used=`ps aux | grep unicor[n] | awk '{sum += $6}END{print sum}'`
+    # parent process
+    #unicorn_mem_used=`/bin/cat /tmp/unicorn_wanpick-server.pid | xargs pmap -x | tail -1 | tr -s ' ' | cut -d ' ' -f 4`
+    unicorn_mem_used=`expr $unicorn_mem_used \* $KILO`
+    unicorn_mem_util=`expr 100 \* $unicorn_mem_used / $mem_total`
+    if [ $VERBOSE -eq 1 ]; then
+        echo "unicorn_mem_util:$unicorn_mem_util"
+    fi
+    if [ $VERIFY -eq 0 -a -n "$unicorn_mem_util" ]; then
+        aws cloudwatch put-metric-data --metric-name "UnicornMemoryUtilization" --value "$unicorn_mem_util" --unit "Percent" $CLOUDWATCH_OPTS
+    fi
+fi
